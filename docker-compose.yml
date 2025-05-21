@@ -1,0 +1,25 @@
+services:
+  chat-app:
+    build: .
+    user: root
+    restart: always
+    ports:
+      - "8080:8080"
+    networks:
+      - appnet
+
+  nginx:
+    image: nginx:stable
+    restart: always
+    volumes:
+      - ./conf/nginx/http.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - chat-app
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    driver: bridge
