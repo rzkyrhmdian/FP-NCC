@@ -10,25 +10,41 @@
     <header>
       <h1>Chat App</h1>
     </header>
+
     <aside>
       <h2>Users online</h2>
       <ul id="users"></ul>
     </aside>
+
     <main>
+      <!-- Chat conversation -->
       <div id="conversation"></div>
       <form id="form">
-        <input
-          type="text"
-          id="data"
-          placeholder="send message"
-          autocomplete="off"
-        />
+        <input type="text" id="data" placeholder="send message" autocomplete="off" required />
         <button type="submit" id="send">Send</button>
+        <button type="button" id="show-poll-btn">Create Poll</button>
       </form>
+
+      <!-- Form create poll -->
+      <div id="poll-section" class="modal">
+        <div class="modal-content">
+          <span class="close">&times;</span>
+          <h2>Create a Poll</h2>
+          <form id="poll-form">
+            <input type="text" id="poll-question" placeholder="Poll question" required />
+            <input type="text" id="poll-options" placeholder="Options (comma-separated)" required />
+            <button type="submit" id="create-poll-btn">Create Poll</button>
+          </form>
+        </div>
+      </div>
+
     </main>
+
+    <!-- Templates -->
     <template id="user">
       <li></li>
     </template>
+
     <template id="message">
       <div>
         <span></span>
