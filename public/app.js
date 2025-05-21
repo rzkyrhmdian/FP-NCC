@@ -8,7 +8,7 @@ const socket = new WebSocket(url);
 let currentPoll = null;
 let hasVoted = false;
 let pollElement = null;
-
+let currentRoom = "global";
 
 socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
@@ -17,15 +17,24 @@ socket.onmessage = (event) => {
     case "update-users":
       updateUserList(data.usernames);
       break;
-
-    case "send-message":
-      addMessage(data.username, data.message);
+    case "update-rooms":
+      updateRoomList(data.rooms);
       break;
-
+    case "send-message":
+      if (data.room === currentRoom) {
+        addMessage(data.username, data.message);
+      }
+      break;
     case "poll-created":
+      if (data.room === currentRoom) {
+        hasVoted = false;
+        renderPoll(data.poll);
+      }
+      break;
     case "poll-updated":
-      currentPoll = data.poll;
-      renderPoll(data.poll);
+      if (data.room === currentRoom) {
+        renderPoll(data.poll);
+      }
       break;
   }
 };
@@ -56,7 +65,18 @@ form.onsubmit = (e) => {
   e.preventDefault();
   const message = inputElement.value;
   inputElement.value = "";
-  socket.send(JSON.stringify({ event: "send-message", message }));
+  socket.send(
+    JSON.stringify({ event: "send-message", message, room: currentRoom })
+  );
+};
+
+document.getElementById("room-form").onsubmit = (e) => {
+  e.preventDefault();
+  const roomName = document.getElementById("room-name").value.trim();
+  if (roomName) {
+    socket.send(JSON.stringify({ event: "create-room", room: roomName }));
+    document.getElementById("room-form").reset();
+  }
 };
 
 const modal = document.getElementById("poll-section");
@@ -98,19 +118,18 @@ document.getElementById("poll-form").onsubmit = (e) => {
     .filter((opt) => opt);
 
   if (question && options.length >= 2) {
-    socket.send(
-      JSON.stringify({
-        event: "create-poll",
-        question,
-        options,
-      })
-    );
+    socket.send(JSON.stringify({
+      event: "create-poll",
+      question,
+      options,
+      room: currentRoom
+    }));
   }
 
   e.target.reset();
 };
 
-// ✅ Poll as chat bubble
+// Fungsi untuk menampilkan polling
 function renderPoll(poll) {
   currentPoll = poll;
 
@@ -125,7 +144,7 @@ function renderPoll(poll) {
   pollElement.innerHTML = "";
 
   const title = document.createElement("strong");
-  title.textContent = `📊 Poll by ${poll.createdBy}: ${poll.question}`;
+  title.textContent = `Poll by ${poll.createdBy}: ${poll.question}`;
   pollElement.appendChild(title);
 
   for (const option of poll.options) {
@@ -136,8 +155,13 @@ function renderPoll(poll) {
     btn.onclick = () => {
       if (hasVoted) return;
       hasVoted = true;
-      socket.send(JSON.stringify({ event: "vote", option }));
+      socket.send(JSON.stringify({ 
+        event: "vote", 
+        option, 
+        room: currentRoom
+      }));
     };
+
 
     pollElement.appendChild(btn);
 
@@ -150,6 +174,25 @@ function renderPoll(poll) {
       voterList.textContent = "No voters yet";
     }
     pollElement.appendChild(voterList);
+  }
+}
+
+function updateRoomList(rooms) {
+  const roomList = document.getElementById("rooms");
+  roomList.replaceChildren();
+
+  for (const room of rooms) {
+    const li = document.createElement("li");
+    li.textContent = room;
+    li.style.cursor = "pointer";
+    if (room === currentRoom) {
+      li.style.fontWeight = "bold";
+    }
+    li.onclick = () => {
+      currentRoom = room;
+      socket.send(JSON.stringify({ event: "switch-room", room }));
+    };
+    roomList.appendChild(li);
   }
 }
 

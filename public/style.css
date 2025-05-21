@@ -163,7 +163,7 @@ button {
   gap: 8px;
 }
 
-#show-poll-btn {
+#show-poll-btn, #send, #crt-room-btn {
   background-color: #4CAF50;
   color: white;
   border: none;
@@ -172,6 +172,6 @@ button {
   cursor: pointer;
 }
 
-#show-poll-btn:hover {
+#show-poll-btn:hover, #send:hover, #crt-room-btn:hover {
   background-color: #45a049;
 }
