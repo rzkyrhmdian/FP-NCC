@@ -157,7 +157,6 @@ button {
   color: black;
 }
 
-/* Chat controls layout */
 .chat-controls {
   display: flex;
   gap: 8px;
@@ -167,6 +166,7 @@ button {
   background-color: #4CAF50;
   color: white;
   border: none;
+  font-weight: bold;
   padding: 8px 16px;
   border-radius: 4px;
   cursor: pointer;
@@ -174,4 +174,15 @@ button {
 
 #show-poll-btn:hover, #send:hover, #crt-room-btn:hover {
   background-color: #45a049;
+}
+
+#room-form {
+  margin-top: 12px;
+  margin-bottom: 16px;
+}
+
+.active-room {
+  background-color: #4b65bd;
+  color: white;
+  font-weight: bold;
 }

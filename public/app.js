@@ -186,13 +186,13 @@ function updateRoomList(rooms) {
     li.textContent = room;
     li.style.cursor = "pointer";
     if (room === currentRoom) {
-      li.style.fontWeight = "bold";
+      li.classList.add("active-room");
     }
     li.onclick = () => {
       currentRoom = room;
       socket.send(JSON.stringify({ event: "switch-room", room }));
+      updateRoomList(rooms);
     };
     roomList.appendChild(li);
   }
 }
-
