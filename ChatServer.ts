@@ -17,6 +17,8 @@ type ChatMessage = {
   username: string;
   message: string;
   room: string;
+  timestamp: number;
+  type: "chat" | "system";
 };
 
 type Room = {
@@ -67,6 +69,7 @@ export default class ChatServer {
       }));
 
       this.sendRoomState(socket, "global");
+      this.broadcastSystemMessage("global", `${username} bergabung ke room #global`);
     };
   }
 
@@ -96,7 +99,13 @@ export default class ChatServer {
         }
         const room = this.userRooms.get(username) || "global";
         const trimmedMessage = data.message.trim();
-        const chatMsg: ChatMessage = { username, message: trimmedMessage, room };
+        const chatMsg: ChatMessage = {
+          username,
+          message: trimmedMessage,
+          room,
+          timestamp: Date.now(),
+          type: "chat",
+        };
         const roomObj = this.rooms.get(room);
         if (roomObj) {
           roomObj.messages.push(chatMsg);
@@ -133,7 +142,9 @@ export default class ChatServer {
           return;
         }
         const prevRoom = this.userRooms.get(username);
-        if (prevRoom) this.rooms.get(prevRoom)?.members.delete(username);
+        if (prevRoom) {
+          this.rooms.get(prevRoom)?.members.delete(username);
+        }
 
         this.userRooms.set(username, data.room);
         this.rooms.get(data.room)?.members.add(username);
@@ -141,6 +152,11 @@ export default class ChatServer {
         const socket = this.connectedClients.get(username);
         if (socket) {
           this.sendRoomState(socket, data.room);
+        }
+
+        if (prevRoom && prevRoom !== data.room) {
+          this.broadcastSystemMessage(prevRoom, `${username} pindah ke room #${data.room}`);
+          this.broadcastSystemMessage(data.room, `${username} bergabung ke room #${data.room}`);
         }
         break;
       }
@@ -244,7 +260,21 @@ export default class ChatServer {
       r.members.delete(username);
     }
     this.broadcastUsernames();
+    if (room) {
+      this.broadcastSystemMessage(room, `${username} keluar dari chat`);
+    }
     console.log(`Client ${username} disconnected`);
+  }
+
+  private broadcastSystemMessage(room: string, message: string) {
+    this.broadcastToRoom(room, {
+      event: "send-message",
+      username: "System",
+      message,
+      room,
+      timestamp: Date.now(),
+      type: "system",
+    });
   }
 
   private broadcastUsernames() {
