@@ -10,6 +10,13 @@ let hasVoted = false;
 let pollElement = null;
 let currentRoom = "global";
 
+function checkUserHasVoted(poll) {
+  if (!poll || !poll.votes) return false;
+  return Object.values(poll.votes).some(
+    (voters) => Array.isArray(voters) && voters.includes(myUsername)
+  );
+}
+
 socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
@@ -20,6 +27,24 @@ socket.onmessage = (event) => {
     case "update-rooms":
       updateRoomList(data.rooms);
       break;
+    case "room-state":
+      if (data.room === currentRoom) {
+        document.getElementById("conversation").replaceChildren();
+        pollElement = null;
+        currentPoll = null;
+        hasVoted = false;
+
+        if (Array.isArray(data.messages)) {
+          for (const msg of data.messages) {
+            addMessage(msg.username, msg.message);
+          }
+        }
+        if (data.poll) {
+          hasVoted = checkUserHasVoted(data.poll);
+          renderPoll(data.poll);
+        }
+      }
+      break;
     case "send-message":
       if (data.room === currentRoom) {
         addMessage(data.username, data.message);
@@ -27,12 +52,13 @@ socket.onmessage = (event) => {
       break;
     case "poll-created":
       if (data.room === currentRoom) {
-        hasVoted = false;
+        hasVoted = checkUserHasVoted(data.poll);
         renderPoll(data.poll);
       }
       break;
     case "poll-updated":
       if (data.room === currentRoom) {
+        hasVoted = checkUserHasVoted(data.poll);
         renderPoll(data.poll);
       }
       break;

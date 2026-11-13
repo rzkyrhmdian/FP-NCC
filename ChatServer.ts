@@ -2,26 +2,38 @@ import { Context } from "@oak/oak";
 
 type WebSocketWithUsername = WebSocket & { username: string };
 type AppEvent = { event: string; [key: string]: unknown };
+
+type Poll = {
+  id: string;
+  question: string;
+  options: string[];
+  votes: Record<string, string[]>;
+  votedUsers: Set<string>;
+  createdBy: string;
+  room: string;
+};
+
+type ChatMessage = {
+  username: string;
+  message: string;
+  room: string;
+};
+
 type Room = {
   name: string;
-  members: Set<string>; // usernames
+  members: Set<string>;
+  poll: Poll | null;
+  messages: ChatMessage[];
 };
+
+const MAX_ROOM_MESSAGES = 100;
 
 export default class ChatServer {
   private rooms: Map<string, Room> = new Map([
-    ["global", { name: "global", members: new Set() }],
+    ["global", { name: "global", members: new Set(), poll: null, messages: [] }],
   ]);
   private userRooms = new Map<string, string>();
   private connectedClients = new Map<string, WebSocketWithUsername>();
-  private currentPoll: {
-    id: string;
-    question: string;
-    options: string[];
-    votes: Record<string, string[]>; // array of voter names
-    votedUsers: Set<string>; // untuk mencegah vote ganda
-    createdBy: string;
-    room: string;
-  } | null = null;
 
 
   public async handleConnection(ctx: Context) {
@@ -54,13 +66,7 @@ export default class ChatServer {
         rooms: [...this.rooms.keys()],
       }));
 
-      // Kirim poll jika ada
-      if (this.currentPoll) {
-        socket.send(JSON.stringify({
-          event: "poll-created",
-          poll: this.serializePoll(this.currentPoll),
-        }));
-      }
+      this.sendRoomState(socket, "global");
     };
   }
 
@@ -89,11 +95,18 @@ export default class ChatServer {
           return;
         }
         const room = this.userRooms.get(username) || "global";
+        const trimmedMessage = data.message.trim();
+        const chatMsg: ChatMessage = { username, message: trimmedMessage, room };
+        const roomObj = this.rooms.get(room);
+        if (roomObj) {
+          roomObj.messages.push(chatMsg);
+          if (roomObj.messages.length > MAX_ROOM_MESSAGES) {
+            roomObj.messages.shift();
+          }
+        }
         this.broadcastToRoom(room, {
           event: "send-message",
-          username,
-          message: data.message.trim(),
-          room,
+          ...chatMsg,
         });
         break;
       }
@@ -104,7 +117,12 @@ export default class ChatServer {
         }
         const roomName = data.room.trim();
         if (!this.rooms.has(roomName)) {
-          this.rooms.set(roomName, { name: roomName, members: new Set() });
+          this.rooms.set(roomName, {
+            name: roomName,
+            members: new Set(),
+            poll: null,
+            messages: [],
+          });
           this.broadcast({ event: "update-rooms", rooms: [...this.rooms.keys()] });
         }
         break;
@@ -119,6 +137,11 @@ export default class ChatServer {
 
         this.userRooms.set(username, data.room);
         this.rooms.get(data.room)?.members.add(username);
+
+        const socket = this.connectedClients.get(username);
+        if (socket) {
+          this.sendRoomState(socket, data.room);
+        }
         break;
       }
 
@@ -141,7 +164,8 @@ export default class ChatServer {
           return;
         }
 
-        this.currentPoll = {
+        const targetRoomObj = this.rooms.get(data.room)!;
+        const newPoll: Poll = {
           id: crypto.randomUUID(),
           question: data.question.trim(),
           options,
@@ -150,9 +174,11 @@ export default class ChatServer {
           room: data.room,
           votedUsers: new Set(),
         };
-        this.broadcast({
+        targetRoomObj.poll = newPoll;
+
+        this.broadcastToRoom(data.room, {
           event: "poll-created",
-          poll: this.serializePoll(this.currentPoll),
+          poll: this.serializePoll(newPoll),
           room: data.room,
         });
         break;
@@ -162,20 +188,20 @@ export default class ChatServer {
         if (typeof data.option !== "string" || typeof data.room !== "string") {
           return;
         }
+        const roomObj = this.rooms.get(data.room);
+        const poll = roomObj?.poll;
         if (
-          this.currentPoll &&
-          this.currentPoll.room === data.room &&
-          this.currentPoll.options.includes(data.option) &&
-          !this.currentPoll.votedUsers.has(username)
+          poll &&
+          poll.options.includes(data.option) &&
+          !poll.votedUsers.has(username)
         ) {
           console.log("Received vote from", username, "for", data.option, "in room", data.room);
-          console.log("Current poll room is", this.currentPoll?.room);
 
-          this.currentPoll.votes[data.option].push(username);
-          this.currentPoll.votedUsers.add(username);
-          this.broadcast({
+          poll.votes[data.option].push(username);
+          poll.votedUsers.add(username);
+          this.broadcastToRoom(data.room, {
             event: "poll-updated",
-            poll: this.serializePoll(this.currentPoll),
+            poll: this.serializePoll(poll),
             room: data.room,
           });
         }
@@ -184,13 +210,26 @@ export default class ChatServer {
     }
   }
 
-  private serializePoll(poll: NonNullable<typeof this.currentPoll>) {
+  private sendRoomState(socket: WebSocketWithUsername, roomName: string) {
+    const room = this.rooms.get(roomName);
+    if (!room || socket.readyState !== WebSocket.OPEN) return;
+
+    socket.send(JSON.stringify({
+      event: "room-state",
+      room: roomName,
+      messages: room.messages,
+      poll: room.poll ? this.serializePoll(room.poll) : null,
+    }));
+  }
+
+  private serializePoll(poll: Poll) {
     return {
       id: poll.id,
       question: poll.question,
       options: poll.options,
       createdBy: poll.createdBy,
       votes: poll.votes,
+      room: poll.room,
     };
   }
 
