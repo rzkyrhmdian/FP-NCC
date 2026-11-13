@@ -1,7 +1,7 @@
 import { Context } from "@oak/oak";
 
 type WebSocketWithUsername = WebSocket & { username: string };
-type AppEvent = { event: string; [key: string]: any };
+type AppEvent = { event: string; [key: string]: unknown };
 type Room = {
   name: string;
   members: Set<string>; // usernames
@@ -26,10 +26,11 @@ export default class ChatServer {
 
   public async handleConnection(ctx: Context) {
     const socket = await ctx.upgrade() as WebSocketWithUsername;
-    const username = ctx.request.url.searchParams.get("username");
+    const rawUsername = ctx.request.url.searchParams.get("username");
+    const username = rawUsername?.trim();
 
     if (!username || this.connectedClients.has(username)) {
-      socket.close(1008, `Username ${username} is already taken or invalid`);
+      socket.close(1008, `Username ${username ?? ""} is already taken or invalid`);
       return;
     }
 
@@ -64,44 +65,90 @@ export default class ChatServer {
   }
 
 
-  private handleMessage(username: string, message: any) {
-    const data = JSON.parse(message.data);
+  private handleMessage(username: string, message: MessageEvent) {
+    if (typeof message.data !== "string") {
+      return;
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(message.data);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || typeof parsed.event !== "string") {
+        console.error("Invalid WebSocket message structure from", username);
+        return;
+      }
+      data = parsed as Record<string, unknown>;
+    } catch (err) {
+      console.error("Failed to parse WebSocket message from", username, err);
+      return;
+    }
 
     switch (data.event) {
-      case "send-message":
+      case "send-message": {
+        if (typeof data.message !== "string" || data.message.trim().length === 0) {
+          return;
+        }
         const room = this.userRooms.get(username) || "global";
         this.broadcastToRoom(room, {
           event: "send-message",
           username,
-          message: data.message,
+          message: data.message.trim(),
           room,
         });
         break;
+      }
 
-      case "create-room":
-        if (!this.rooms.has(data.room)) {
-          this.rooms.set(data.room, { name: data.room, members: new Set() });
+      case "create-room": {
+        if (typeof data.room !== "string" || data.room.trim().length === 0) {
+          return;
+        }
+        const roomName = data.room.trim();
+        if (!this.rooms.has(roomName)) {
+          this.rooms.set(roomName, { name: roomName, members: new Set() });
           this.broadcast({ event: "update-rooms", rooms: [...this.rooms.keys()] });
         }
         break;
+      }
 
-      case "switch-room":
+      case "switch-room": {
+        if (typeof data.room !== "string" || !this.rooms.has(data.room)) {
+          return;
+        }
         const prevRoom = this.userRooms.get(username);
         if (prevRoom) this.rooms.get(prevRoom)?.members.delete(username);
 
         this.userRooms.set(username, data.room);
         this.rooms.get(data.room)?.members.add(username);
         break;
+      }
 
-      case "create-poll":
+      case "create-poll": {
+        if (
+          typeof data.question !== "string" ||
+          data.question.trim().length === 0 ||
+          !Array.isArray(data.options) ||
+          typeof data.room !== "string" ||
+          !this.rooms.has(data.room)
+        ) {
+          return;
+        }
+        const options = data.options
+          .filter((opt): opt is string => typeof opt === "string")
+          .map((opt) => opt.trim())
+          .filter((opt) => opt.length > 0);
+
+        if (options.length < 2) {
+          return;
+        }
+
         this.currentPoll = {
           id: crypto.randomUUID(),
-          question: data.question,
-          options: data.options,
-          votes: Object.fromEntries(data.options.map((opt: string) => [opt, []])), // array kosong
+          question: data.question.trim(),
+          options,
+          votes: Object.fromEntries(options.map((opt) => [opt, []])),
           createdBy: username,
-          room: data.room, // pastikan room juga dikirim
-          votedUsers: new Set(), // tambahkan untuk mencegah double vote
+          room: data.room,
+          votedUsers: new Set(),
         };
         this.broadcast({
           event: "poll-created",
@@ -109,8 +156,12 @@ export default class ChatServer {
           room: data.room,
         });
         break;
+      }
 
-      case "vote":
+      case "vote": {
+        if (typeof data.option !== "string" || typeof data.room !== "string") {
+          return;
+        }
         if (
           this.currentPoll &&
           this.currentPoll.room === data.room &&
@@ -124,11 +175,12 @@ export default class ChatServer {
           this.currentPoll.votedUsers.add(username);
           this.broadcast({
             event: "poll-updated",
-            poll: this.currentPoll,
+            poll: this.serializePoll(this.currentPoll),
             room: data.room,
           });
         }
         break;
+      }
     }
   }
 
@@ -144,6 +196,14 @@ export default class ChatServer {
 
   private clientDisconnected(username: string) {
     this.connectedClients.delete(username);
+    const room = this.userRooms.get(username);
+    if (room) {
+      this.rooms.get(room)?.members.delete(username);
+      this.userRooms.delete(username);
+    }
+    for (const r of this.rooms.values()) {
+      r.members.delete(username);
+    }
     this.broadcastUsernames();
     console.log(`Client ${username} disconnected`);
   }
@@ -157,7 +217,9 @@ export default class ChatServer {
   private broadcast(message: AppEvent) {
     const messageString = JSON.stringify(message);
     for (const client of this.connectedClients.values()) {
-      client.send(messageString);
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(messageString);
+      }
     }
   }
 
@@ -167,7 +229,7 @@ export default class ChatServer {
 
     for (const username of members) {
       const client = this.connectedClients.get(username);
-      if (client) {
+      if (client && client.readyState === WebSocket.OPEN) {
         client.send(messageStr);
       }
     }
