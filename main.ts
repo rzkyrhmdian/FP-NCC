@@ -12,8 +12,8 @@ app.use(router.routes());
 app.use(router.allowedMethods());
 app.use(async (context) => {
   await context.send({
-    root: Deno.cwd(),
-    index: "public/index.html",
+    root: `${Deno.cwd()}/public`,
+    index: "index.html",
   });
 });
 
