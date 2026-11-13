@@ -1,13 +1,10 @@
-const savedName = localStorage.getItem("username") || "";
-const promptedName = prompt("Masukkan nama pengguna Anda:", savedName);
-const myUsername = (promptedName && promptedName.trim()) || "Anonymous";
-localStorage.setItem("username", myUsername);
+let myUsername = (localStorage.getItem("username") || "").trim();
+let socket = null;
+let activeConnId = 0;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+let needsRoomResync = false;
 
-const url = new URL(`./start_web_socket?username=${encodeURIComponent(myUsername)}`, location.href);
-url.protocol = url.protocol.replace("http", "ws");
-const socket = new WebSocket(url);
-
-let currentPoll = null;
 let hasVoted = false;
 let currentRoom = "global";
 let knownRooms = ["global"];
@@ -16,10 +13,27 @@ const conversationEl = document.getElementById("conversation");
 const pinnedPollEl = document.getElementById("pinned-poll");
 const headerRoomEl = document.getElementById("header-room");
 const inputElement = document.getElementById("data");
+const sendBtn = document.getElementById("send");
+const crtRoomBtn = document.getElementById("crt-room-btn");
+
+const bannerEl = document.getElementById("connection-banner");
+const bannerTextEl = document.getElementById("connection-banner-text");
+const reconnectBtn = document.getElementById("reconnect-btn");
+
 const modal = document.getElementById("poll-section");
 const pollBtn = document.getElementById("show-poll-btn");
 const closeModalBtn = document.getElementById("close-poll-modal");
 const pollQuestionInput = document.getElementById("poll-question");
+
+const usernameModal = document.getElementById("username-modal");
+const usernameForm = document.getElementById("username-form");
+const usernameInput = document.getElementById("username-input");
+const usernameErrorEl = document.getElementById("username-error");
+
+const sidebarEl = document.getElementById("sidebar");
+const menuToggleBtn = document.getElementById("menu-toggle");
+const closeSidebarBtn = document.getElementById("close-sidebar-btn");
+const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
 function formatTime(timestamp) {
   const date = new Date(timestamp || Date.now());
@@ -38,6 +52,24 @@ function getUserVoteOption(poll) {
   return null;
 }
 
+function setControlsEnabled(enabled) {
+  sendBtn.disabled = !enabled;
+  pollBtn.disabled = !enabled;
+  crtRoomBtn.disabled = !enabled;
+}
+
+function showConnectionBanner(message, canReconnect) {
+  bannerTextEl.textContent = message;
+  reconnectBtn.hidden = !canReconnect;
+  bannerEl.hidden = false;
+}
+
+function hideConnectionBanner() {
+  bannerEl.hidden = true;
+  bannerTextEl.textContent = "";
+  reconnectBtn.hidden = true;
+}
+
 function setConversationState(text, kind) {
   conversationEl.replaceChildren();
   const stateEl = document.createElement("p");
@@ -54,7 +86,6 @@ function clearConversationState() {
 }
 
 function clearPoll() {
-  currentPoll = null;
   hasVoted = false;
   pinnedPollEl.replaceChildren();
   pinnedPollEl.hidden = true;
@@ -65,53 +96,217 @@ function updateRoomHeader(room) {
   inputElement.placeholder = `Tulis pesan untuk #${room}...`;
 }
 
-setConversationState("Menghubungkan ke server dan memuat pesan room...", "loading");
+function openUsernameModal(errorText = "") {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  usernameInput.value = myUsername;
+  if (errorText) {
+    usernameErrorEl.textContent = errorText;
+    usernameErrorEl.hidden = false;
+  } else {
+    usernameErrorEl.textContent = "";
+    usernameErrorEl.hidden = true;
+  }
+  usernameModal.hidden = false;
+  usernameInput.focus();
+  usernameInput.select();
+}
 
-socket.onmessage = (event) => {
-  const data = JSON.parse(event.data);
+function closeUsernameModal() {
+  usernameModal.hidden = true;
+  usernameErrorEl.hidden = true;
+  usernameErrorEl.textContent = "";
+}
 
-  switch (data.event) {
-    case "update-users":
-      updateUserList(data.usernames);
-      break;
-    case "update-rooms":
-      knownRooms = Array.isArray(data.rooms) ? data.rooms : ["global"];
-      updateRoomList(knownRooms);
-      break;
-    case "room-state":
-      if (data.room === currentRoom) {
-        conversationEl.replaceChildren();
-        clearPoll();
+function openSidebar() {
+  sidebarEl.classList.add("open");
+  sidebarBackdrop.hidden = false;
+  menuToggleBtn.setAttribute("aria-expanded", "true");
+  closeSidebarBtn.focus();
+}
 
-        if (Array.isArray(data.messages) && data.messages.length > 0) {
-          for (const msg of data.messages) {
-            addMessage(msg.username, msg.message, msg.timestamp, msg.type || "chat");
+function closeSidebar(restoreFocus = false) {
+  if (!sidebarEl.classList.contains("open")) return;
+  sidebarEl.classList.remove("open");
+  sidebarBackdrop.hidden = true;
+  menuToggleBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    menuToggleBtn.focus();
+  }
+}
+
+menuToggleBtn.addEventListener("click", () => {
+  if (sidebarEl.classList.contains("open")) {
+    closeSidebar(true);
+  } else {
+    openSidebar();
+  }
+});
+
+closeSidebarBtn.addEventListener("click", () => closeSidebar(true));
+sidebarBackdrop.addEventListener("click", () => closeSidebar(true));
+
+function scheduleReconnect() {
+  if (reconnectTimer || !usernameModal.hidden || !myUsername) return;
+  if (reconnectAttempts >= 5) {
+    showConnectionBanner(
+      "Gagal menyambung otomatis setelah 5 percobaan. Periksa server lalu klik Sambungkan Ulang.",
+      true
+    );
+    return;
+  }
+  const delayMs = Math.min(10000, 2000 * (2 ** reconnectAttempts));
+  reconnectAttempts += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectSocket(myUsername);
+  }, delayMs);
+}
+
+function connectSocket(username) {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  activeConnId += 1;
+  const connId = activeConnId;
+
+  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+    socket.close();
+  }
+
+  setControlsEnabled(false);
+  setConversationState("Menghubungkan ke server dan memuat pesan room...", "loading");
+
+  const url = new URL(`./start_web_socket?username=${encodeURIComponent(username)}`, location.href);
+  url.protocol = url.protocol.replace("http", "ws");
+  const ws = new WebSocket(url);
+  socket = ws;
+
+  ws.onopen = () => {
+    if (connId !== activeConnId) return;
+    reconnectAttempts = 0;
+    hideConnectionBanner();
+    closeUsernameModal();
+    setControlsEnabled(true);
+    inputElement.focus();
+  };
+
+  ws.onmessage = (event) => {
+    if (connId !== activeConnId) return;
+    const data = JSON.parse(event.data);
+
+    switch (data.event) {
+      case "update-users":
+        updateUserList(data.usernames);
+        break;
+      case "update-rooms":
+        knownRooms = Array.isArray(data.rooms) ? data.rooms : ["global"];
+        if (needsRoomResync && currentRoom !== "global") {
+          needsRoomResync = false;
+          if (knownRooms.includes(currentRoom)) {
+            ws.send(JSON.stringify({ event: "switch-room", room: currentRoom }));
+          } else {
+            currentRoom = "global";
+            updateRoomHeader("global");
           }
-        } else {
-          setConversationState(
-            "Belum ada percakapan di room ini. Kirim pesan pertama untuk memulai diskusi.",
-            "empty"
-          );
         }
+        updateRoomList(knownRooms);
+        break;
+      case "room-state":
+        if (data.room === currentRoom) {
+          conversationEl.replaceChildren();
+          clearPoll();
 
-        if (data.poll) {
+          if (Array.isArray(data.messages) && data.messages.length > 0) {
+            for (const msg of data.messages) {
+              addMessage(msg.username, msg.message, msg.timestamp, msg.type || "chat");
+            }
+          } else {
+            setConversationState(
+              "Belum ada percakapan di room ini. Kirim pesan pertama untuk memulai diskusi.",
+              "empty"
+            );
+          }
+
+          if (data.poll) {
+            renderPoll(data.poll);
+          }
+        }
+        break;
+      case "send-message":
+        if (data.room === currentRoom) {
+          addMessage(data.username, data.message, data.timestamp, data.type || "chat");
+        }
+        break;
+      case "poll-created":
+      case "poll-updated":
+        if (data.room === currentRoom && data.poll) {
           renderPoll(data.poll);
         }
-      }
-      break;
-    case "send-message":
-      if (data.room === currentRoom) {
-        addMessage(data.username, data.message, data.timestamp, data.type || "chat");
-      }
-      break;
-    case "poll-created":
-    case "poll-updated":
-      if (data.room === currentRoom && data.poll) {
-        renderPoll(data.poll);
-      }
-      break;
+        break;
+    }
+  };
+
+  ws.onclose = (event) => {
+    if (connId !== activeConnId) return;
+    setControlsEnabled(false);
+
+    if (event.code === 1008) {
+      showConnectionBanner(
+        `Nama pengguna "${myUsername}" sudah dipakai atau tidak valid.`,
+        false
+      );
+      openUsernameModal(
+        `Nama pengguna "${myUsername}" sudah dipakai atau tidak valid. Silakan gunakan nama lain.`
+      );
+      return;
+    }
+
+    needsRoomResync = true;
+    showConnectionBanner(
+      "Koneksi ke server terputus. Periksa jaringan atau klik Sambungkan Ulang.",
+      true
+    );
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    if (connId !== activeConnId) return;
+    if (ws.readyState !== WebSocket.OPEN) {
+      showConnectionBanner(
+        "Tidak dapat terhubung ke server chat. Pastikan server berjalan lalu coba lagi.",
+        true
+      );
+    }
+  };
+}
+
+reconnectBtn.addEventListener("click", () => {
+  if (!myUsername) {
+    openUsernameModal();
+    return;
   }
-};
+  reconnectAttempts = 0;
+  connectSocket(myUsername);
+});
+
+usernameForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const chosen = usernameInput.value.trim();
+  if (!chosen) {
+    usernameErrorEl.textContent = "Nama pengguna tidak boleh kosong.";
+    usernameErrorEl.hidden = false;
+    usernameInput.focus();
+    return;
+  }
+  myUsername = chosen;
+  localStorage.setItem("username", myUsername);
+  connectSocket(myUsername);
+});
 
 function updateUserList(usernames) {
   const userList = document.getElementById("users");
@@ -159,13 +354,11 @@ function addMessage(username, message, timestamp, type = "chat") {
   conversationEl.prepend(clone);
 }
 
-inputElement.focus();
-
 const form = document.getElementById("form");
 form.onsubmit = (e) => {
   e.preventDefault();
   const message = inputElement.value.trim();
-  if (!message || socket.readyState !== WebSocket.OPEN) return;
+  if (!message || !socket || socket.readyState !== WebSocket.OPEN) return;
   inputElement.value = "";
   socket.send(
     JSON.stringify({ event: "send-message", message, room: currentRoom })
@@ -176,7 +369,7 @@ document.getElementById("room-form").onsubmit = (e) => {
   e.preventDefault();
   const roomInput = document.getElementById("room-name");
   const roomName = roomInput.value.trim();
-  if (roomName && socket.readyState === WebSocket.OPEN) {
+  if (roomName && socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ event: "create-room", room: roomName }));
     document.getElementById("room-form").reset();
   }
@@ -203,8 +396,11 @@ modal.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !modal.hidden) {
+  if (event.key !== "Escape") return;
+  if (!modal.hidden) {
     closePollModal();
+  } else if (sidebarEl.classList.contains("open")) {
+    closeSidebar(true);
   }
 });
 
@@ -218,7 +414,7 @@ document.getElementById("poll-form").onsubmit = (e) => {
     .map((opt) => opt.trim())
     .filter((opt) => opt);
 
-  if (question && options.length >= 2 && socket.readyState === WebSocket.OPEN) {
+  if (question && options.length >= 2 && socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({
       event: "create-poll",
       question,
@@ -231,7 +427,6 @@ document.getElementById("poll-form").onsubmit = (e) => {
 };
 
 function renderPoll(poll) {
-  currentPoll = poll;
   const userVote = getUserVoteOption(poll);
   hasVoted = userVote !== null;
 
@@ -303,7 +498,7 @@ function renderPoll(poll) {
     btn.appendChild(countSpan);
 
     btn.onclick = () => {
-      if (hasVoted || socket.readyState !== WebSocket.OPEN) return;
+      if (hasVoted || !socket || socket.readyState !== WebSocket.OPEN) return;
       hasVoted = true;
       socket.send(JSON.stringify({
         event: "vote",
@@ -345,18 +540,31 @@ function updateRoomList(rooms) {
     }
 
     btn.onclick = () => {
-      if (room === currentRoom) return;
+      if (room === currentRoom) {
+        closeSidebar(false);
+        return;
+      }
       currentRoom = room;
       updateRoomHeader(room);
       clearPoll();
       setConversationState(`Memuat pesan untuk #${room}...`, "loading");
-      if (socket.readyState === WebSocket.OPEN) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ event: "switch-room", room }));
       }
       updateRoomList(rooms);
+      closeSidebar(false);
+      inputElement.focus();
     };
 
     li.appendChild(btn);
     roomList.appendChild(li);
   }
+}
+
+setControlsEnabled(false);
+if (myUsername) {
+  connectSocket(myUsername);
+} else {
+  setConversationState("Masukkan nama pengguna untuk bergabung ke chat.", "empty");
+  openUsernameModal();
 }

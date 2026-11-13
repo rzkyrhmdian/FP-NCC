@@ -51,7 +51,12 @@
     <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
 
     <main>
-      <div id="connection-banner" class="connection-banner" role="alert" hidden></div>
+      <div id="connection-banner" class="connection-banner" role="alert" hidden>
+        <span id="connection-banner-text"></span>
+        <button type="button" id="reconnect-btn" class="banner-action-btn" hidden>
+          Sambungkan Ulang
+        </button>
+      </div>
 
       <section id="pinned-poll" aria-label="Polling aktif" aria-live="polite" hidden></section>
 
@@ -112,6 +117,35 @@
               />
             </div>
             <button type="submit" id="create-poll-btn">Create Poll</button>
+          </form>
+        </div>
+      </div>
+
+      <div
+        id="username-modal"
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="username-modal-title"
+        hidden
+      >
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="username-modal-title">Masuk ke Chat</h2>
+          </div>
+          <form id="username-form" class="poll-form">
+            <div class="field-group">
+              <label for="username-input">Nama pengguna</label>
+              <input
+                type="text"
+                id="username-input"
+                placeholder="Contoh: Rizky"
+                autocomplete="username"
+                required
+              />
+            </div>
+            <p id="username-error" class="field-error" role="alert" hidden></p>
+            <button type="submit" id="join-chat-btn">Gabung ke Chat</button>
           </form>
         </div>
       </div>
