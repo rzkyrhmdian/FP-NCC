@@ -1,6 +1,10 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --watch main.ts"
+    "dev": "deno run --allow-net --allow-read --allow-write --allow-env --watch main.ts",
+    "start": "deno run --allow-net --allow-read --allow-write --allow-env main.ts",
+    "test": "deno test --allow-read --allow-write",
+    "check": "deno check main.ts ChatServer.ts ChatStorage.ts ChatServer_test.ts",
+    "lint": "deno lint main.ts ChatServer.ts ChatStorage.ts ChatServer_test.ts public/app.js"
   },
   "imports": {
     "@oak/oak": "jsr:@oak/oak@^17.1.4",

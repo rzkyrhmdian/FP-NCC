@@ -1,22 +1,39 @@
 services:
   chat-app:
     build: .
-    user: root
-    restart: always
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - DATA_PATH=/app/data/chat-state.json
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "deno",
+          "eval",
+          "const r = await fetch('http://127.0.0.1:8080/health'); if (!r.ok) Deno.exit(1);",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - appnet
 
   nginx:
-    image: nginx:stable
-    restart: always
+    image: nginx:stable-alpine
+    restart: unless-stopped
     volumes:
-      - ./conf/nginx/http.conf:/etc/nginx/nginx.conf
+      - ./conf/nginx/http.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "80:80"
     depends_on:
-      - chat-app
+      chat-app:
+        condition: service_healthy
     networks:
       - appnet
 
