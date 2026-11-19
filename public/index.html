@@ -10,18 +10,40 @@
 
   <body>
     <header>
-      <button
-        type="button"
-        id="menu-toggle"
-        class="menu-toggle"
-        aria-expanded="false"
-        aria-controls="sidebar"
-        aria-label="Buka daftar room dan pengguna"
-      >
-        Rooms &amp; Users
-      </button>
-      <h1>FP-NCC Chat</h1>
-      <div id="header-room" class="header-room" aria-live="polite">#global</div>
+      <div class="header-left">
+        <button
+          type="button"
+          id="menu-toggle"
+          class="menu-toggle"
+          aria-expanded="false"
+          aria-controls="sidebar"
+          aria-label="Buka daftar room dan pengguna"
+        >
+          Rooms &amp; Users
+        </button>
+        <h1>FP-NCC Chat</h1>
+      </div>
+
+      <div class="header-right">
+        <div class="header-room-group" aria-live="polite">
+          <span id="header-room" class="header-room">#global</span>
+          <span id="header-room-members" class="header-room-members">0 anggota</span>
+        </div>
+
+        <div id="connection-status" class="status-pill status-connecting" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="connection-status-text">Menyambungkan</span>
+        </div>
+
+        <button
+          type="button"
+          id="change-username-btn"
+          class="header-user-btn"
+          aria-label="Ganti nama pengguna"
+        >
+          <span id="header-username">Belum masuk</span>
+        </button>
+      </div>
     </header>
 
     <aside id="sidebar" aria-label="Daftar room dan pengguna">
@@ -38,11 +60,19 @@
       </div>
       <ul id="rooms"></ul>
 
-      <form id="room-form">
+      <form id="room-form" novalidate>
         <label for="room-name" class="sr-only">Nama room baru</label>
-        <input type="text" id="room-name" placeholder="Nama room baru" required />
+        <input
+          type="text"
+          id="room-name"
+          maxlength="32"
+          placeholder="Nama room baru"
+          autocomplete="off"
+          required
+        />
         <button type="submit" id="crt-room-btn" aria-label="Buat room baru">+</button>
       </form>
+      <p id="room-error" class="sidebar-error" role="alert" hidden></p>
 
       <h2>Users online (<span id="user-count">0</span>)</h2>
       <ul id="users"></ul>
@@ -58,22 +88,45 @@
         </button>
       </div>
 
+      <div id="action-toast" class="action-toast" role="alert" aria-live="assertive" hidden>
+        <span id="action-toast-text"></span>
+        <button
+          type="button"
+          id="dismiss-toast-btn"
+          class="toast-close-btn"
+          aria-label="Tutup pemberitahuan"
+        >
+          &times;
+        </button>
+      </div>
+
       <section id="pinned-poll" aria-label="Polling aktif" aria-live="polite" hidden></section>
 
-      <div id="conversation" role="log" aria-live="polite" aria-label="Riwayat percakapan"></div>
+      <div class="conversation-wrap">
+        <div id="conversation" role="log" aria-live="polite" aria-label="Riwayat percakapan"></div>
+        <button type="button" id="jump-latest-btn" class="jump-latest-btn" hidden>
+          Ke pesan terbaru
+        </button>
+      </div>
+
+      <div id="typing-indicator" class="typing-indicator" aria-live="polite" hidden></div>
 
       <form id="form" class="composer-form">
-        <label for="data" class="sr-only">Tulis pesan</label>
-        <input
-          type="text"
-          id="data"
-          placeholder="Tulis pesan untuk #global..."
-          autocomplete="off"
-          required
-        />
+        <div class="composer-input-wrap">
+          <label for="data" class="sr-only">Tulis pesan</label>
+          <input
+            type="text"
+            id="data"
+            maxlength="1000"
+            placeholder="Tulis pesan untuk #global..."
+            autocomplete="off"
+            required
+          />
+          <span id="char-counter" class="char-counter" aria-live="polite" hidden>0/1000</span>
+        </div>
         <div class="chat-controls">
-          <button type="submit" id="send">Send</button>
-          <button type="button" id="show-poll-btn">Create Poll</button>
+          <button type="submit" id="send">Kirim</button>
+          <button type="button" id="show-poll-btn">Buat Poll</button>
         </div>
       </form>
 
@@ -97,18 +150,19 @@
               &times;
             </button>
           </div>
-          <form id="poll-form" class="poll-form">
+          <form id="poll-form" class="poll-form" novalidate>
             <div class="field-group">
               <label for="poll-question">Pertanyaan polling</label>
               <input
                 type="text"
                 id="poll-question"
+                maxlength="200"
                 placeholder="Contoh: Makan siang di mana?"
                 required
               />
             </div>
             <div class="field-group">
-              <label for="poll-options">Opsi pilihan (pisahkan dengan koma)</label>
+              <label for="poll-options">Opsi pilihan (2 sampai 8 opsi, pisahkan dengan koma)</label>
               <input
                 type="text"
                 id="poll-options"
@@ -116,7 +170,8 @@
                 required
               />
             </div>
-            <button type="submit" id="create-poll-btn">Create Poll</button>
+            <p id="poll-error" class="field-error" role="alert" hidden></p>
+            <button type="submit" id="create-poll-btn">Terbitkan Polling</button>
           </form>
         </div>
       </div>
@@ -132,13 +187,23 @@
         <div class="modal-content">
           <div class="modal-header">
             <h2 id="username-modal-title">Masuk ke Chat</h2>
+            <button
+              type="button"
+              id="close-username-modal"
+              class="close"
+              aria-label="Tutup dialog ganti nama pengguna"
+              hidden
+            >
+              &times;
+            </button>
           </div>
-          <form id="username-form" class="poll-form">
+          <form id="username-form" class="poll-form" novalidate>
             <div class="field-group">
-              <label for="username-input">Nama pengguna</label>
+              <label for="username-input">Nama pengguna (maksimal 30 karakter)</label>
               <input
                 type="text"
                 id="username-input"
+                maxlength="30"
                 placeholder="Contoh: Rizky"
                 autocomplete="username"
                 required
